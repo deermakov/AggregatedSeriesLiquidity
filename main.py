@@ -108,7 +108,6 @@ def main():
         print("No data found after filtering.")
         return
 
-    df = df.sort_values('timestamp')
     agg_df = aggregate_trades(df)
     if agg_df.empty:
         print("No aggregated trades.")
