@@ -57,18 +57,24 @@ def aggregate_trades(df):
                 'first_time': timestamp,
                 'first_price': price,
                 'last_price': price,
-                'total_qty': qty
+                'total_qty': qty,
+                'count': 1
             }
             aggregated.append(current_group)
         else:
             current_group['last_price'] = price
             current_group['total_qty'] += qty
+            current_group['count'] += 1
     
     agg_df = pd.DataFrame(aggregated)
     if not agg_df.empty:
-        agg_df['impact'] = agg_df['last_price'] - agg_df['first_price']
-        agg_df.loc[agg_df['sign'] == 'SELL', 'impact'] *= -1
-        agg_df = agg_df.rename(columns={'first_time': 'timestamp'})
+        # Filter out groups that consist of only one trade
+        agg_df = agg_df[agg_df['count'] > 1].copy()
+        
+        if not agg_df.empty:
+            agg_df['impact'] = agg_df['last_price'] - agg_df['first_price']
+            agg_df.loc[agg_df['sign'] == 'SELL', 'impact'] *= -1
+            agg_df = agg_df.rename(columns={'first_time': 'timestamp'})
     
     return agg_df
 
