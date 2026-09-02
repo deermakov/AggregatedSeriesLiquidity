@@ -4,11 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from datetime import datetime, timedelta
+import json
 
 # Parameters are now read from environment variables provided by docker-compose
 CONFIG = {
     "INPUT_FILE": os.getenv("INPUT_FILE", "2026.09.02.txt"),
     "OUTPUT_GRAPH": os.getenv("OUTPUT_GRAPH", "liquidity_analysis.png"),
+    "DIAGNOSTIC_FILE": os.getenv("DIAGNOSTIC_FILE", "distributions_diagnostic.txt"),
+    "OUTPUT_EXCEL": os.getenv("OUTPUT_EXCEL", "aggregated_trades.xlsx"),
     "VOL_QUANTILE": int(os.getenv("VOL_QUANTILE", 10)),
     "IMPACT_QUANTILE": int(os.getenv("IMPACT_QUANTILE", 10)),
     "START_TIME": os.getenv("START_TIME", "07:00:00")
@@ -86,11 +89,11 @@ def process_side(agg_df, side, vol_q_count, impact_q_count):
         if not subset.empty:
             impacts = subset['impact'].values
             iq = np.unique(np.quantile(impacts, np.linspace(0, 1, impact_q_count + 1)))
-            impact_distributions[q_idx] = iq
+            impact_distributions[q_idx] = iq.tolist() # Convert to list for serialization
         else:
             impact_distributions[q_idx] = []
 
-    return side_df, vol_quantiles, impact_distributions
+    return side_df, vol_quantiles.tolist(), impact_distributions
 
 def main():
     print(f"Starting processing with config: {CONFIG}")
@@ -113,12 +116,57 @@ def main():
     buy_df, buy_vol_q, buy_impact_dist = process_side(agg_df, 'BUY', CONFIG["VOL_QUANTILE"], CONFIG["IMPACT_QUANTILE"])
     sell_df, sell_vol_q, sell_impact_dist = process_side(agg_df, 'SELL', CONFIG["VOL_QUANTILE"], CONFIG["IMPACT_QUANTILE"])
 
+    # --- Diagnostic Data Saving ---
+    diagnostic_data = {
+        "timestamp": datetime.now().isoformat(),
+        "config": CONFIG,
+        "buy_side": {
+            "vol_quantiles": buy_vol_q,
+            "impact_distributions": buy_impact_dist
+        },
+        "sell_side": {
+            "vol_quantiles": sell_vol_q,
+            "impact_distributions": sell_impact_dist
+        }
+    }
+    try:
+        with open(CONFIG["DIAGNOSTIC_FILE"], 'w') as f:
+            f.write("=== LIQUIDITY ANALYSIS DIAGNOSTICS ===\n")
+            f.write(json.dumps(diagnostic_data, indent=4))
+        print(f"Diagnostic data saved to {CONFIG['DIAGNOSTIC_FILE']}")
+    except Exception as e:
+        print(f"Failed to save diagnostic file: {e}")
+    # ------------------------------
+
+    # --- Exporting Aggregated Trades to Excel ---
+    try:
+        export_df = pd.concat([buy_df, sell_df], ignore_index=True)
+        if not export_df.empty:
+            def get_impact_q_idx(row):
+                side = row['sign']
+                imp = row['impact']
+                v_idx = int(row['vol_q_idx'])
+                dist = buy_impact_dist.get(v_idx, []) if side == 'BUY' else sell_impact_dist.get(v_idx, [])
+                if len(dist) > 1:
+                    idx = np.searchsorted(dist, imp) - 1
+                    return max(0, min(len(dist) - 2, idx))
+                return -1
+
+            export_df['impact_q_idx'] = export_df.apply(get_impact_q_idx, axis=1)
+            cols_to_keep = ['timestamp', 'sign', 'first_price', 'last_price', 'total_qty', 'impact', 'vol_q_idx', 'impact_q_idx']
+            actual_cols = [c for c in cols_to_keep if c in export_df.columns]
+            export_df[actual_cols].to_excel(CONFIG["OUTPUT_EXCEL"], index=False)
+            print(f"Aggregated trades exported to {CONFIG['OUTPUT_EXCEL']}")
+        else:
+            print("No aggregated data available for Excel export.")
+    except Exception as e:
+        print(f"Failed to export Excel file: {e}")
+
     cmap_buy = plt.get_cmap('viridis')
     cmap_sell = plt.get_cmap('inferno')
 
     def assign_colors(side_df, vol_q, impact_dist, cmap):
-        if side_df.empty:
-            return []
+        if side_df.empty: return []
         colors = []
         for _, row in side_df.iterrows():
             v_idx = int(row['vol_q_idx'])
@@ -140,21 +188,17 @@ def main():
         if side_df.empty:
             ax.set_title(f"{title} (No Data)")
             return
-        
         for _, row in side_df.iterrows():
             ax.vlines(row['timestamp'], row['first_price'], row['last_price'], 
                       color=row['color'], linewidth=2, alpha=0.8)
-
         ax.set_title(title)
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-        
-        if not side_df.empty:
-            start = side_df['timestamp'].min()
-            end = side_df['timestamp'].max()
-            current_hour = start.replace(minute=0, second=0, microsecond=0)
-            while current_hour <= end:
-                ax.axvline(x=current_hour, color='gray', linestyle='-', alpha=0.3)
-                current_hour += timedelta(hours=1)
+        start = side_df['timestamp'].min()
+        end = side_df['timestamp'].max()
+        current_hour = start.replace(minute=0, second=0, microsecond=0)
+        while current_hour <= end:
+            ax.axvline(x=current_hour, color='gray', linestyle='-', alpha=0.3)
+            current_hour += timedelta(hours=1)
 
     plot_side(ax1, buy_df, "Aggregated BUY Trades (Vertical Price Range)")
     plot_side(ax2, sell_df, "Aggregated SELL Trades (Vertical Price Range)")
