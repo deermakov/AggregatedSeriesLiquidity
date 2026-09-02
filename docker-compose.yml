@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  liquidity-analyzer:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      - INPUT_FILE=2026.09.02.txt
+      - OUTPUT_GRAPH=liquidity_analysis.png
+      - VOL_QUANTILE=10
+      - IMPACT_QUANTILE=10
+      - START_TIME=10:00:00
