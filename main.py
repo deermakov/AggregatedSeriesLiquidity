@@ -67,6 +67,7 @@ def aggregate_trades(df):
     agg_df = pd.DataFrame(aggregated)
     if not agg_df.empty:
         agg_df['impact'] = agg_df['last_price'] - agg_df['first_price']
+        agg_df.loc[agg_df['sign'] == 'SELL', 'impact'] *= -1
         agg_df = agg_df.rename(columns={'first_time': 'timestamp'})
     
     return agg_df
